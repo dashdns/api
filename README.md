@@ -201,6 +201,120 @@ per-user salt.
 Tokens are shown exactly once, at mint time. A lost token is replaced by rotation, never
 recovered.
 
+> **Parsing a token.** The secret is base64url, and that alphabet contains `-` **and `_`**.
+> Split on the *first two* underscores only — never on every underscore, or you will
+> reject roughly half of all valid tokens at random. See `auth.Split`.
+
+### Flow
+
+Both planes enter through the same header and diverge immediately on prefix:
+
+```
+                        Authorization: Bearer <token>
+                                     │
+                        ┌────────────┴────────────┐
+                        │   which route family?   │
+                        └────────────┬────────────┘
+              /api/policies          │          /api/admin/*
+                        ▼                         ▼
+                 RequireAppliance           RequireAdmin
+                        │                         │
+              prefix == "dnsdap_" ?      prefix == "dnsdsn_" ?
+                        │                         │
+              appliances.token_id        admin_sessions.token_id
+                        │                         │
+              SHA-256(secret) match ?    SHA-256(secret) match ?
+                        │                         │
+                revoked_at IS NULL ?        expires_at > now ?
+                        │                         │
+                        ▼                         ▼
+                Principal{appliance,      Principal{admin,
+                          tenant}                  tenant, role}
+                        │                         │
+                        └────────────┬────────────┘
+                                     ▼
+                              ResolveTenant
+                        single-tenant → -default-tenant
+                        multi-tenant  → principal's tenant
+                                        (superadmin may override
+                                         with X-Tenant-ID)
+                                     ▼
+                                  handler
+```
+
+A failure at any step returns `401` with a `WWW-Authenticate` header and a `reason` in the
+message — `missing`, `invalid`, `revoked` or `expired`. The two planes never fall through
+to each other: an appliance token on an admin route is rejected at the prefix check,
+before any database lookup or hash comparison happens.
+
+### Appliance tokens
+
+An appliance token is the credential a **dnsd instance** presents when it polls for its
+blocklist. It is not just an on/off gate — it carries four distinct jobs:
+
+1. **It selects the tenant.** `AuthenticateAppliance` resolves the token to an appliance
+   record and takes `tenant_id` from it, and that is what decides whose blocklist gets
+   served. In multi-tenant mode the token is the *only* answer to "who is asking" — without
+   it every poller looks identical and there is no way to pick a tenant. This is why
+   `-require-appliance-auth=false` is viable for single-tenant self-hosted deployments but
+   not for the SaaS mode.
+2. **It is individually revocable.** Decommissioning a node or containing a leaked secret
+   is one call against that appliance, with no effect on the rest of the fleet. A single
+   shared secret would mean rotating every node at once.
+3. **It bounds authority.** The token reaches `GET /api/policies` and nothing else. A
+   secret pulled off an edge node cannot write policy, mint further tokens, or read the
+   management API.
+4. **It reports liveness.** Each successful poll updates `last_seen_at` (throttled to about
+   one write per minute), so `GET /api/admin/appliances` shows which nodes are actually
+   fetching. A node that silently stopped polling is visible here before anyone notices
+   stale enforcement.
+
+Minting and use:
+
+```
+operator                policy-controller              dnsd @ edge-ist-01
+   │                            │                              │
+   │ POST /api/admin/appliances │                              │
+   │ Bearer dnsdsn_…            │                              │
+   ├───────────────────────────►│                              │
+   │                        Mint("dnsdap")                     │
+   │                        store SHA-256(secret) only         │
+   │◄───────────────────────────┤                              │
+   │ 201 {token:"dnsdap_…"}     │                              │
+   │      ── shown ONCE ──      │                              │
+   │                            │                              │
+   ├──── out of band: config management / secret store ───────►│
+   │                            │                              │
+   │                            │   GET /api/policies          │
+   │                            │   Bearer dnsdap_…            │
+   │                            │◄─────────────────────────────┤
+   │                            │   200 + ETag   (304 on the   │
+   │                            ├──────────────►  next poll)   │
+   │                        touch last_seen_at                 │
+```
+
+Revocation takes effect on the appliance's very next poll:
+
+```
+   │ POST /api/admin/appliances/{id}/revoke                     │
+   ├───────────────────────────►│                              │
+   │                        revoked_at = now                   │
+   │                            │   GET /api/policies          │
+   │                            │◄─────────────────────────────┤
+   │                            │   401 (reason=revoked)       │
+   │                            ├─────────────────────────────►│
+```
+
+Note what revocation does *not* do: it does not reach into the appliance and clear its BPF
+maps. dnsd keeps enforcing the last blocklist it successfully installed. Revoking stops
+future updates; it does not roll back current enforcement.
+
+Rotation (`POST /api/admin/appliances/{id}/rotate`) mints a replacement and clears
+`revoked_at`, so it doubles as the way to bring a revoked appliance back into service.
+There is no overlap window — the old token stops working the instant the new one is
+issued, so push the new value to the node before rotating if a gap in policy refresh
+matters.
+
 ### Admin login flow
 
 ```bash
@@ -389,6 +503,27 @@ curl -s -X POST http://localhost:8080/api/admin/appliances \
 ```
 
 `token` appears in exactly two responses — create and rotate — and nowhere else in the API.
+
+### Rotate, revoke and audit an appliance
+
+```bash
+APP_ID=app_2d4f6a8c0e1b3d5f7a9c1e3b5d7f9a0c
+
+# Who is actually polling, and when did they last succeed?
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/admin/appliances \
+  | jq '.appliances[] | {name, token_id, revoked, last_seen_at}'
+
+# Replace the token (also clears a previous revocation)
+curl -s -X POST "http://localhost:8080/api/admin/appliances/$APP_ID/rotate" \
+  -H "Authorization: Bearer $TOKEN" | jq -r .token
+
+# Stop this node from receiving updates, keep its record and history
+curl -s -X POST "http://localhost:8080/api/admin/appliances/$APP_ID/revoke" \
+  -H "Authorization: Bearer $TOKEN" | jq '{name, revoked, revoked_at}'
+```
+
+Revoke is idempotent, and it keeps the row so `last_seen_at` and the registration history
+survive. Use `DELETE` only when you want the record gone entirely.
 
 ### Fetch the blocklist as an appliance
 
@@ -642,6 +777,8 @@ sqlite3 policy-controller.db "SELECT name, revoked_at FROM appliances WHERE toke
 | Symptom | Likely cause |
 | --- | --- |
 | dnsd logs `unexpected status code: 401` | appliance token missing or revoked, or `-require-appliance-auth` is on before the fleet has tokens |
+| `401 reason=invalid` with a token that looks correct | a client splitting the token on *every* `_`; the base64url secret contains underscores about half the time |
+| `401 reason=missing` | no `Authorization` header reached the server — usually an empty shell variable expanding to `Bearer ` |
 | dnsd logs `unexpected status code: 304` | dnsd sent `If-None-Match` but treats non-200 as an error — it needs the patch below |
 | Admin call returns 401 with `WWW-Authenticate` | session expired (`-admin-session-ttl`); log in again |
 | Admin call returns 403 on `X-Tenant-ID` | non-superadmin crossing tenants |

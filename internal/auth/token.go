@@ -71,12 +71,23 @@ func Mint(prefix string) (Token, error) {
 }
 
 // Split parses a token of the expected kind into its public ID and secret.
+//
+// The split is anchored rather than done with strings.Split: the secret is
+// base64url, whose alphabet includes '_', so splitting on every underscore
+// would reject roughly half of all valid tokens. Only the prefix and the ID
+// are guaranteed underscore-free (a literal and a hex string), so the token is
+// cut exactly twice from the left and everything after the second separator is
+// the secret.
 func Split(prefix, raw string) (id, secret string, err error) {
-	parts := strings.Split(strings.TrimSpace(raw), "_")
-	if len(parts) != 3 || parts[0] != prefix || parts[1] == "" || parts[2] == "" {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(raw), prefix+"_")
+	if !ok {
 		return "", "", ErrMalformedToken
 	}
-	return parts[1], parts[2], nil
+	id, secret, ok = strings.Cut(rest, "_")
+	if !ok || id == "" || secret == "" {
+		return "", "", ErrMalformedToken
+	}
+	return id, secret, nil
 }
 
 // HashSecret returns the SHA-256 of a token secret.
