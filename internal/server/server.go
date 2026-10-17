@@ -23,6 +23,7 @@ import (
 	"github.com/dashdns/api/internal/metrics"
 	"github.com/dashdns/api/internal/policy"
 	"github.com/dashdns/api/internal/store"
+	"github.com/dashdns/api/internal/ui"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -117,6 +118,11 @@ func (s *Server) buildRouter() *httpx.Router {
 		}),
 		ops,
 	)
+	if s.cfg.EnableUI {
+		// The dashboard is just another module, and it is mounted last so that
+		// GET / lists the API surface before the console that drives it.
+		r.Mount(ui.New())
+	}
 	// The index handler needs the finished route table, so it is filled in
 	// after every module has registered.
 	ops.router = r

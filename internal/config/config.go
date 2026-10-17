@@ -50,6 +50,11 @@ type Config struct {
 	// rollout where dnsd instances predate the -ip-blocklist-token flag.
 	RequireApplianceAuth bool
 
+	// EnableUI mounts the embedded admin dashboard at /ui/. Turning it off
+	// leaves a pure JSON surface for deployments that front the API with their
+	// own console or do not want a browser-reachable login form at all.
+	EnableUI bool
+
 	// BootstrapAdminUser / BootstrapAdminPassword create the first admin
 	// account on an empty database. They are ignored once any admin exists.
 	BootstrapAdminUser     string
@@ -76,6 +81,7 @@ func Default() Config {
 		MultiTenant:          false,
 		DefaultTenant:        "default",
 		RequireApplianceAuth: true,
+		EnableUI:             true,
 		AdminSessionTTL:      12 * time.Hour,
 		ReadTimeout:          10 * time.Second,
 		WriteTimeout:         30 * time.Second,
@@ -95,6 +101,7 @@ func Parse(fs *flag.FlagSet, args []string) (Config, error) {
 	fs.BoolVar(&cfg.MultiTenant, "multi-tenant", envBool("MULTI_TENANT", cfg.MultiTenant), "Enable tenant isolation (SaaS mode). Off means single-tenant self-hosted mode")
 	fs.StringVar(&cfg.DefaultTenant, "default-tenant", envString("DEFAULT_TENANT", cfg.DefaultTenant), "Tenant ID used in single-tenant mode")
 	fs.BoolVar(&cfg.RequireApplianceAuth, "require-appliance-auth", envBool("REQUIRE_APPLIANCE_AUTH", cfg.RequireApplianceAuth), "Require a Bearer appliance token on GET /api/policies")
+	fs.BoolVar(&cfg.EnableUI, "ui", envBool("UI", cfg.EnableUI), "Serve the embedded admin dashboard at /ui/")
 	fs.StringVar(&cfg.BootstrapAdminUser, "bootstrap-admin-user", envString("BOOTSTRAP_ADMIN_USER", cfg.BootstrapAdminUser), "Username of the admin account created on an empty database")
 	fs.StringVar(&cfg.BootstrapAdminPassword, "bootstrap-admin-password", envString("BOOTSTRAP_ADMIN_PASSWORD", cfg.BootstrapAdminPassword), "Password for -bootstrap-admin-user (prefer the env var over the flag)")
 	fs.DurationVar(&cfg.AdminSessionTTL, "admin-session-ttl", envDuration("ADMIN_SESSION_TTL", cfg.AdminSessionTTL), "Lifetime of an admin session token")

@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>policy-controller</title>
+<link rel="stylesheet" href="app.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+
+<!-- ─── login ─────────────────────────────────────────────────────────── -->
+<div id="login-screen" class="login-screen">
+  <form id="login-form" class="panel login-box" autocomplete="on">
+    <h1>policy-controller</h1>
+    <p class="muted" id="login-mode">&nbsp;</p>
+    <label>Username
+      <input type="text" name="username" id="login-username" autocomplete="username" required autofocus>
+    </label>
+    <label>Password
+      <input type="password" name="password" id="login-password" autocomplete="current-password" required>
+    </label>
+    <button type="submit" class="primary">Sign in</button>
+    <p class="error" id="login-error" hidden></p>
+    <p class="muted small">POST /api/admin/auth/login</p>
+  </form>
+</div>
+
+<!-- ─── app ───────────────────────────────────────────────────────────── -->
+<div id="app" class="app" hidden>
+
+  <header class="topbar">
+    <div class="brand">
+      policy-controller
+      <span class="badge" id="hdr-version">—</span>
+      <span class="badge" id="hdr-mode">—</span>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-view="policies" class="active">Policies</button>
+      <button data-view="appliances">Appliances</button>
+      <button data-view="tenants" hidden>Tenants</button>
+      <button data-view="system">System</button>
+    </nav>
+    <div class="session">
+      <span id="hdr-tenant-wrap" class="tenant-switch" hidden>
+        <label for="hdr-tenant">X-Tenant-ID</label>
+        <select id="hdr-tenant"></select>
+      </span>
+      <span id="hdr-user" class="muted">—</span>
+      <button id="btn-logout" class="link">Log out</button>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ── policies ─────────────────────────────────────────────────── -->
+    <section id="view-policies" class="view">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Policies</h2>
+          <div class="panel-actions">
+            <span class="badge" id="pol-count">0 records</span>
+            <span class="badge" id="pol-revision">rev —</span>
+            <input type="search" id="pol-filter" placeholder="filter ip / domain">
+            <button id="pol-refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="hint">GET /api/admin/policies</p>
+        <table class="grid">
+          <thead>
+            <tr><th style="width:11em">IP</th><th>Domains</th><th style="width:5em">#</th>
+                <th style="width:13em">Updated</th><th style="width:12em"></th></tr>
+          </thead>
+          <tbody id="pol-rows"></tbody>
+        </table>
+        <p class="empty" id="pol-empty" hidden>No policies yet.</p>
+      </div>
+
+      <div class="columns">
+        <form class="panel" id="pol-create-form">
+          <div class="panel-head"><h2>New policy</h2></div>
+          <p class="hint">POST /api/admin/policies</p>
+          <label>IPv4 address
+            <input type="text" id="pol-new-ip" placeholder="192.168.1.10" spellcheck="false" required>
+          </label>
+          <label>Domains <span class="muted small">(one per line or comma separated)</span>
+            <textarea id="pol-new-domains" rows="6" spellcheck="false"
+                      placeholder="ads.example.com&#10;tracker.example.net"></textarea>
+          </label>
+          <div class="row-actions">
+            <button type="submit" class="primary">Create</button>
+            <span class="muted small">Domains are lowercased, de-duplicated and sorted by the server.</span>
+          </div>
+        </form>
+
+        <div class="panel" id="pol-detail-panel">
+          <div class="panel-head">
+            <h2>Edit <code id="pol-detail-ip">—</code></h2>
+            <div class="panel-actions">
+              <button id="pol-detail-reload" hidden>Reload</button>
+              <button id="pol-detail-close" class="link" hidden>Close</button>
+            </div>
+          </div>
+          <p class="empty" id="pol-detail-empty">Select a policy to edit it.</p>
+
+          <div id="pol-detail-body" hidden>
+            <dl class="facts">
+              <dt>id</dt><dd id="pol-detail-id">—</dd>
+              <dt>tenant_id</dt><dd id="pol-detail-tenant">—</dd>
+              <dt>created_at</dt><dd id="pol-detail-created">—</dd>
+              <dt>updated_at</dt><dd id="pol-detail-updated">—</dd>
+            </dl>
+
+            <fieldset>
+              <legend>Replace all domains &mdash; PUT /api/admin/policies/{ip}</legend>
+              <textarea id="pol-put-domains" rows="7" spellcheck="false"></textarea>
+              <div class="row-actions">
+                <button id="pol-put-btn" class="primary">Replace</button>
+                <span class="muted small">An empty list empties the policy, it does not delete it.</span>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Incremental change &mdash; PATCH /api/admin/policies/{ip}</legend>
+              <div class="columns tight">
+                <label>add
+                  <textarea id="pol-patch-add" rows="4" spellcheck="false" placeholder="newsite.example.org"></textarea>
+                </label>
+                <label>remove
+                  <textarea id="pol-patch-remove" rows="4" spellcheck="false" placeholder="tracker.example.net"></textarea>
+                </label>
+              </div>
+              <div class="row-actions">
+                <button id="pol-patch-btn">Apply</button>
+              </div>
+            </fieldset>
+
+            <fieldset class="danger">
+              <legend>DELETE /api/admin/policies/{ip}</legend>
+              <div class="row-actions">
+                <button id="pol-delete-btn" class="danger">Delete policy</button>
+              </div>
+            </fieldset>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── appliances ───────────────────────────────────────────────── -->
+    <section id="view-appliances" class="view" hidden>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Appliances</h2>
+          <div class="panel-actions">
+            <span class="badge" id="app-count">0 records</span>
+            <button id="app-refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="hint">GET /api/admin/appliances</p>
+        <table class="grid">
+          <thead>
+            <tr><th>Name</th><th style="width:9em">Status</th><th style="width:10em">token_id</th>
+                <th style="width:13em">Created</th><th style="width:13em">Last seen</th>
+                <th style="width:16em"></th></tr>
+          </thead>
+          <tbody id="app-rows"></tbody>
+        </table>
+        <p class="empty" id="app-empty" hidden>No appliances registered.</p>
+      </div>
+
+      <div class="columns">
+        <form class="panel" id="app-create-form">
+          <div class="panel-head"><h2>Register appliance</h2></div>
+          <p class="hint">POST /api/admin/appliances</p>
+          <label>Name <span class="muted small">(1&ndash;128 characters)</span>
+            <input type="text" id="app-new-name" placeholder="branch-office-01" spellcheck="false" required>
+          </label>
+          <label>Description <span class="muted small">(optional)</span>
+            <input type="text" id="app-new-desc" placeholder="Istanbul HQ edge">
+          </label>
+          <div class="row-actions">
+            <button type="submit" class="primary">Create</button>
+            <span class="muted small">The token is shown once and cannot be retrieved again.</span>
+          </div>
+        </form>
+
+        <div class="panel" id="app-detail-panel">
+          <div class="panel-head">
+            <h2>Appliance</h2>
+            <div class="panel-actions">
+              <button id="app-detail-close" class="link" hidden>Close</button>
+            </div>
+          </div>
+          <p class="empty" id="app-detail-empty">Select an appliance to inspect it.</p>
+          <pre class="json" id="app-detail-json" hidden></pre>
+          <p class="hint" id="app-detail-hint" hidden>GET /api/admin/appliances/{id}</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── tenants ──────────────────────────────────────────────────── -->
+    <section id="view-tenants" class="view" hidden>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Tenants</h2>
+          <div class="panel-actions">
+            <span class="badge" id="ten-count">0 records</span>
+            <button id="ten-refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="hint">GET /api/admin/tenants &mdash; multi-tenant mode, superadmin only</p>
+        <table class="grid">
+          <thead>
+            <tr><th style="width:14em">ID</th><th>Name</th><th style="width:13em">Created</th>
+                <th style="width:13em">Updated</th><th style="width:12em"></th></tr>
+          </thead>
+          <tbody id="ten-rows"></tbody>
+        </table>
+        <p class="empty" id="ten-empty" hidden>No tenants.</p>
+      </div>
+
+      <div class="columns">
+        <form class="panel" id="ten-create-form">
+          <div class="panel-head"><h2>New tenant</h2></div>
+          <p class="hint">POST /api/admin/tenants</p>
+          <label>ID <span class="muted small">(lowercase, digits, '-', max 63)</span>
+            <input type="text" id="ten-new-id" placeholder="acme" spellcheck="false" required>
+          </label>
+          <label>Name <span class="muted small">(optional, defaults to the ID)</span>
+            <input type="text" id="ten-new-name" placeholder="ACME Corp">
+          </label>
+          <div class="row-actions">
+            <button type="submit" class="primary">Create</button>
+          </div>
+        </form>
+
+        <div class="panel" id="ten-detail-panel">
+          <div class="panel-head">
+            <h2>Tenant</h2>
+            <div class="panel-actions">
+              <button id="ten-detail-close" class="link" hidden>Close</button>
+            </div>
+          </div>
+          <p class="empty" id="ten-detail-empty">Select a tenant to inspect it.</p>
+          <pre class="json" id="ten-detail-json" hidden></pre>
+          <p class="hint" id="ten-detail-hint" hidden>GET /api/admin/tenants/{id}</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── system ───────────────────────────────────────────────────── -->
+    <section id="view-system" class="view" hidden>
+      <div class="columns">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Health</h2>
+            <div class="panel-actions"><button id="sys-refresh">Refresh</button></div>
+          </div>
+          <p class="hint">GET / &middot; GET /healthz &middot; GET /readyz</p>
+          <dl class="facts">
+            <dt>service</dt><dd id="sys-service">—</dd>
+            <dt>version</dt><dd id="sys-version">—</dd>
+            <dt>mode</dt><dd id="sys-mode">—</dd>
+            <dt>healthz</dt><dd id="sys-health">—</dd>
+            <dt>uptime</dt><dd id="sys-uptime">—</dd>
+            <dt>readyz</dt><dd id="sys-ready">—</dd>
+          </dl>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>Session</h2></div>
+          <p class="hint">GET /api/admin/auth/whoami</p>
+          <dl class="facts">
+            <dt>kind</dt><dd id="who-kind">—</dd>
+            <dt>id</dt><dd id="who-id">—</dd>
+            <dt>username</dt><dd id="who-username">—</dd>
+            <dt>tenant_id</dt><dd id="who-tenant">—</dd>
+            <dt>role</dt><dd id="who-role">—</dd>
+            <dt>expires_at</dt><dd id="who-expires">—</dd>
+          </dl>
+          <div class="row-actions"><button id="who-refresh">whoami</button></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Appliance plane probe</h2></div>
+        <p class="hint">GET&nbsp;/&nbsp;HEAD /api/policies &mdash; uses an <em>appliance</em> token, not your session</p>
+        <div class="probe">
+          <label>Appliance token
+            <input type="text" id="probe-token" spellcheck="false" placeholder="dnsdap_…  (leave empty to probe anonymously)">
+          </label>
+          <label>If-None-Match
+            <input type="text" id="probe-etag" spellcheck="false" placeholder="auto-filled from the last response">
+          </label>
+          <div class="row-actions">
+            <button id="probe-get" class="primary">GET</button>
+            <button id="probe-head">HEAD</button>
+          </div>
+        </div>
+        <dl class="facts">
+          <dt>status</dt><dd id="probe-status">—</dd>
+          <dt>ETag</dt><dd id="probe-resp-etag">—</dd>
+          <dt>X-Policy-Revision</dt><dd id="probe-rev">—</dd>
+          <dt>Last-Modified</dt><dd id="probe-modified">—</dd>
+        </dl>
+        <pre class="json" id="probe-body" hidden></pre>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Mounted routes</h2></div>
+        <p class="hint">GET /</p>
+        <table class="grid compact">
+          <thead><tr><th style="width:7em">Method</th><th>Pattern</th><th style="width:10em">Module</th></tr></thead>
+          <tbody id="sys-routes"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ── request log ────────────────────────────────────────────────── -->
+  <footer class="console">
+    <div class="console-head">
+      <strong>Request log</strong>
+      <span class="muted small">method &middot; path &middot; status &middot; X-Request-ID</span>
+      <button id="log-clear" class="link">clear</button>
+      <button id="log-toggle" class="link">hide</button>
+    </div>
+    <ol id="log-lines" class="console-body"></ol>
+  </footer>
+</div>
+
+<!-- ─── one-time token modal ──────────────────────────────────────────── -->
+<dialog id="token-modal">
+  <h2>Copy this token now</h2>
+  <p class="muted" id="token-hint"></p>
+  <textarea id="token-value" rows="3" readonly spellcheck="false"></textarea>
+  <div class="row-actions">
+    <button id="token-copy" class="primary">Copy</button>
+    <button id="token-close">I have stored it</button>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
